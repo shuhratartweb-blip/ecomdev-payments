@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ecomdev-payments",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/students",
+      "/students/*",
+      "/debtors",
+      "/telegram/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ecomdev-payments",
+      "database_id": "6105f491-effa-4f33-bc49-e49775cb2089",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "TIMEZONE": "Asia/Tashkent"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "ustoz.rieltor.store",
+      "custom_domain": true
+    }
+  ]
+}
