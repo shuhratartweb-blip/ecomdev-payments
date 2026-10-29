@@ -10,3 +10,7 @@ coverage/
 playwright-report/
 test-results/
 .local/
+
+# Reviewer PDF contains access details; public copy is in docs/
+output/pdf/
+tmp/pdfs/

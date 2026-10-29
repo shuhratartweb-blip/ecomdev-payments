@@ -14,13 +14,13 @@ No server, Cloudflare, secrets, package or migration files changed by the fronte
 
 Russian and Uzbek Latin, persisted light/blue and warm/green themes; student creation/edit/delete forms and history; debtors by month, name/group filters and summary; payment list; manual entry and explicitly simulated Payme/Click confirmation/cancellation/success; mobile cards and accessible native dialogs. Payment requests use Idempotency-Key and integer-based money helpers.
 
-API contract used: session/login/logout; students GET/POST/PATCH/DELETE; balances?month; payments GET; students/:id/payments GET/POST. Error handling expects `{error:{code}}`; amounts are decimal strings.
+API contract used: session/login/logout; students GET/POST/PATCH/DELETE; balances?month; payments GET; students/:id/payments GET/POST. Error handling expects `{error:{code}}`; amounts are whole-UZS integer strings.
 
 ## Verified
 
 - TypeScript check and production build pass.
-- Four web-model tests pass: exact fractional totals, amount/date validation, month validation, Uzbek month display.
-- Browser preview: student creation; Payme partial payment 40.25 against fee100.50 results in debt60.25; RU/UZ and themes persist after reload.
+- Current full suite: 34 tests pass; typecheck and production build pass (2026-10-29). Frontend tests cover whole sums, validation, Uzbek months, DD-MM-YYYY dates and Tashkent timestamps.
+- Historical browser preview checked student creation, partial payment, and RU/UZ/theme persistence. Fractional-money examples from that earlier revision are superseded: current UI accepts whole UZS only.
 - Mobile390 and320 widths inspected. Fixed button overflow at320; document width equals viewport width.
 - Browser console reported no errors.
 - Real authentication, database writes, complete CRUD browser coverage and live deployment remain integration checks; preview checks do not establish those.
@@ -33,4 +33,4 @@ API contract used: session/login/logout; students GET/POST/PATCH/DELETE; balance
 4. Retained stacked mobile metrics and student cards; added compact mobile navigation.
 5. Retained simulated provider banner; uses official source logos (see brand-sources.md).
 
-Intentional additions: preview banner, search/group filter, functional authentication and payment dialogs. Totals reflect actual fictional records rather than inconsistent generated-image figures. Screenshots: `docs/design/web-light.png`, `web-warm.png`, `web-mobile.png`.
+Intentional additions: preview banner, search/group filter, functional authentication and payment dialogs. Totals reflect actual fictional records rather than inconsistent generated-image figures. Historical visual references: `docs/design/web-light.png`, `web-warm.png`, `web-mobile.png`; they are not proof of the latest formatting changes.

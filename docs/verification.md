@@ -2,7 +2,7 @@
 
 ## Scope and command
 
-Checks exercise the local Worker runtime and real D1 through Miniflare v5 (`convertV4MiniflareOptions`), plus pure frontend formatting and validation functions. They use isolated databases and test-only credentials; production account and secret files are not read. This report does not claim live-deployment or browser UI verification.
+Checks exercise the local Worker runtime and real D1 through Miniflare v5 (`convertV4MiniflareOptions`), plus pure frontend formatting and validation functions. They use isolated databases and test-only credentials; production account and secret files are not read. These automated results are local; a separate read-only live login smoke check returned HTTP 200 on https://ustoz.rieltor.store. No live payment writes were performed during this documentation release.
 
 ```sh
 npm test
@@ -14,7 +14,7 @@ Use Node 22+ as required by the installed Cloudflare tooling. Verification here 
 
 ## Final local result — 2026-10-29
 
-**31 tests passed, 0 failed.** TypeScript checking passed. The Vite production build passed before the final small receipt timestamp addition; the main implementer performs the final deployment build.
+**34 tests passed, 0 failed.** TypeScript checking and the final Vite production build passed on source commit `595c999` (2026-10-29), including the latest Telegram all-students and Payme/Click changes.
 
 Covered behavior:
 
@@ -36,4 +36,8 @@ All initial independent review regressions were reproduced before fixes: null re
 
 Frontend amount fields use integer steps and numeric keyboards; editable form fields are disabled during submission. A payment form obtains today's date when opened instead of reusing login-time date. History shows effective date and recorded-at timestamp separately, and successful payment receipts show recorded time.
 
-The deployment configuration sends `/payments` and `/balances` aliases through the Worker before SPA fallback. Live domain, fresh-start README execution and rendered desktop/mobile verification remain separate release checks owned by the main implementer.
+The deployment configuration sends `/payments` and `/balances` aliases through the Worker before SPA fallback. Live login was checked separately (HTTP 200). Full fresh-start README execution and a fresh rendered desktop/mobile sweep were not repeated in this documentation release; historical UI checks are distinguished in web-handoff.md.
+
+## Latest Telegram coverage
+
+All-students pagination includes fully paid and overpaid learners; debtors excludes them. Both providers require explicit simulation confirmation, record their method, and resist replay. Cancellation and obsolete manual confirmation write nothing; Uzbek flow text is checked.
