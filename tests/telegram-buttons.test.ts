@@ -112,3 +112,50 @@ test("cancel does not save and language buttons replace menu", async () => {
   assert.equal(menu.reply_markup.keyboard[0][1].text, "💳 To‘lov kiritish");
   assert.match((await send("📋 Qarzdorlar")).text, /75000 UZS/);
 });
+
+test("all students includes fully paid and overpaid students, with payment buttons and pagination", async () => {
+  await send("Русский");
+  await db
+    .prepare(
+      "INSERT INTO students(id,name,phone,group_name,monthly_fee) VALUES(6,'B Paid','123','QA',10000)",
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO payments(student_id,amount,date,method) VALUES(6,10000,'2026-10-29','manual')",
+    )
+    .run();
+  const menu = await send("/start");
+  assert.ok(
+    menu.reply_markup.keyboard.flat().some((b) => b.text === "👥 Все ученики"),
+  );
+  const all = await send("👥 Все ученики");
+  assert.match(all.text, /#6 B Paid/);
+  assert.match(all.text, /Без долга/);
+  assert.ok(
+    all.reply_markup.keyboard.flat().some((b) => b.text === "#6 · B Paid"),
+  );
+  assert.doesNotMatch((await send("📋 Должники")).text, /#6 B Paid/);
+  await send("#6 · B Paid");
+  await send("50");
+  await send("✅ Подтвердить оплату");
+  assert.match((await send("👥 Все ученики")).text, /Переплата: 50 UZS/);
+  for (let i = 10; i < 19; i++)
+    await db
+      .prepare(
+        "INSERT INTO students(id,name,phone,group_name,monthly_fee) VALUES(?,?,?, ?,?)",
+      )
+      .bind(i, `Z Student ${i}`, "123", "QA", 10000)
+      .run();
+  const first = await send("👥 Все ученики");
+  assert.ok(
+    first.reply_markup.keyboard.flat().some((b) => b.text === "Далее → 2"),
+  );
+  const second = await send("Далее → 2");
+  assert.match(second.text, /#18 Z Student 18/);
+  await send("O‘zbekcha");
+  assert.match(
+    (await send("👥 Barcha o‘quvchilar")).text,
+    /Ortiqcha to‘lov: 50 UZS/,
+  );
+});

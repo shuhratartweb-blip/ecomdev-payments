@@ -10,6 +10,13 @@ const copy = {
     help: "Ustoz — учёт оплат. Выберите действие кнопкой ниже.",
     empty: "Должников нет.",
     debt: "📋 Должники",
+    all: "👥 Все ученики",
+    noStudents: "Ученики пока не добавлены.",
+    fee: "Тариф",
+    received: "Оплачено",
+    owed: "Долг",
+    settled: "Без долга",
+    overpaid: "Переплата",
     pay: "💳 Внести оплату",
     language: "🌐 Язык / Til",
     cancel: "↩️ В меню",
@@ -30,6 +37,13 @@ const copy = {
     help: "Ustoz — to‘lovlar hisobi. Quyidagi tugmalardan birini tanlang.",
     empty: "Qarzdorlar yo‘q.",
     debt: "📋 Qarzdorlar",
+    all: "👥 Barcha o‘quvchilar",
+    noStudents: "O‘quvchilar hali qo‘shilmagan.",
+    fee: "Tarif",
+    received: "To‘langan",
+    owed: "Qarz",
+    settled: "Qarz yo‘q",
+    overpaid: "Ortiqcha to‘lov",
     pay: "💳 To‘lov kiritish",
     language: "🌐 Язык / Til",
     cancel: "↩️ Menyuga",
@@ -127,7 +141,7 @@ export async function telegram(
   const t = copy[lang],
     service = new Service(env.DB);
   const current = today(env.TIMEZONE, new Date(msg.date * 1000));
-  const menu = [[t.debt, t.pay], [t.language]],
+  const menu = [[t.debt, t.pay], [t.all], [t.language]],
     back = [[t.cancel]];
   const clear = () =>
     env.DB.prepare("DELETE FROM telegram_flow WHERE user_id=?").bind(uid).run();
@@ -149,20 +163,42 @@ export async function telegram(
   const pageMatch = input.match(
     /^(?:Далее →|← Назад|Keyingi →|← Oldingi) (\d+)$/,
   );
-  if (input === t.pay || pageMatch) {
+  if (
+    input === t.pay ||
+    input === t.all ||
+    command === "/students" ||
+    pageMatch
+  ) {
     await clear();
-    const students = await service.students();
-    const page = Math.max(0, Number(pageMatch?.[1] ?? 1) - 1);
-    const rows = students
-      .slice(page * 8, page * 8 + 8)
-      .map((s) => [`#${s.id} · ${s.name.slice(0, 70)}`]);
+    const students = await service.balances(current.slice(0, 7));
+    const page = Math.min(
+      Math.max(0, Math.ceil(students.length / 8) - 1),
+      Math.max(0, Number(pageMatch?.[1] ?? 1) - 1),
+    );
+    const visible = students.slice(page * 8, page * 8 + 8);
+    const rows = visible.map((s) => [`#${s.id} · ${s.name.slice(0, 70)}`]);
     const navigation = [];
     if (page > 0) navigation.push(`${t.prev} ${page}`);
     if ((page + 1) * 8 < students.length)
       navigation.push(`${t.next} ${page + 2}`);
     if (navigation.length) rows.push(navigation);
     rows.push([t.cancel]);
-    return reply(t.choose, rows);
+    const details = visible
+      .map((s) => {
+        const extra = Number(s.paid) - Number(s.monthlyFee);
+        const status =
+          Number(s.debt) > 0
+            ? `${t.owed}: ${s.debt} UZS`
+            : extra > 0
+              ? `${t.overpaid}: ${extra} UZS`
+              : t.settled;
+        return `#${s.id} ${s.name} · ${s.group}\n${t.fee}: ${s.monthlyFee} UZS · ${t.received}: ${s.paid} UZS\n${status}`;
+      })
+      .join("\n\n");
+    return reply(
+      `${t.all} · ${current.slice(0, 7).split("-").reverse().join("-")} · ${page + 1}/${Math.max(1, Math.ceil(students.length / 8))}\n\n${details || t.noStudents}\n\n${students.length ? t.choose : ""}`,
+      rows,
+    );
   }
   if (selection) {
     try {
@@ -206,6 +242,7 @@ export async function telegram(
     }
   }
   if (command === "/debt" || input === t.debt) {
+    await clear();
     const month = current.slice(0, 7),
       rows = await service.debtors(month);
     if (!rows.length)
