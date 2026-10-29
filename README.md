@@ -11,6 +11,8 @@
 Нужны Git, Node.js **22+** (проверено на 24), npm. Для локальной работы аккаунт Cloudflare не нужен.
 
 ```sh
+node --version   # требуется v22 или новее; рекомендуем v24 из .node-version
+npm --version
 git clone https://github.com/shuhratartweb-blip/ecomdev-payments.git
 cd ecomdev-payments
 npm ci
@@ -18,6 +20,14 @@ cp .env.example .dev.vars
 ```
 
 В `.dev.vars` задайте `APP_PASSWORD` и случайный `SESSION_SECRET` (не менее 32 символов). Telegram-поля можно оставить пустыми. `.dev.vars` исключён из Git.
+
+Сгенерировать значение для `SESSION_SECRET` можно командой ниже; скопируйте результат в соответствующее поле `.dev.vars`:
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+`APP_PASSWORD` — выбранный вами пароль локального входа, он не обязан совпадать с паролем опубликованной демонстрации.
 
 ```sh
 npm run db:migrate
@@ -54,16 +64,16 @@ curl -c cookies.txt -H 'Content-Type: application/json' \
   -d '{"password":"YOUR_LOCAL_PASSWORD"}' http://localhost:8787/api/login
 
 curl -b cookies.txt -H 'Content-Type: application/json' \
-  -d '{"name":"Ali Valiyev","phone":"+998900000000","group":"IELTS-1","monthlyFee":"700000.00"}' \
+  -d '{"name":"Ali Valiyev","phone":"+998900000000","group":"IELTS-1","monthlyFee":"700000"}' \
   http://localhost:8787/students
 
 curl -b cookies.txt http://localhost:8787/students
 curl -b cookies.txt -X PATCH -H 'Content-Type: application/json' \
-  -d '{"monthlyFee":"800000.00"}' http://localhost:8787/students/1
+  -d '{"monthlyFee":"800000"}' http://localhost:8787/students/1
 
 curl -b cookies.txt -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: example-payment-001' \
-  -d '{"amount":"250000.00","date":"2026-10-29","method":"manual"}' \
+  -d '{"amount":"250000","date":"2026-10-29","method":"manual"}' \
   http://localhost:8787/students/1/payments
 
 curl -b cookies.txt http://localhost:8787/students/1/payments
@@ -72,9 +82,9 @@ curl -b cookies.txt 'http://localhost:8787/debtors?month=2026-10'
 curl -b cookies.txt -X DELETE http://localhost:8787/students/1
 ```
 
-Денежные значения в JSON — десятичные строки, в БД — целые минимальные единицы. `monthlyFee` может быть нулём; `amount` строго больше нуля. Максимум одного значения — 1 000 000 000 UZS, точность до двух знаков. Дата `YYYY-MM-DD`, месяц `YYYY-MM`.
+Суммы вводятся и показываются в целых сумах (UZS), без дробной части. В JSON денежные значения — строки целых чисел, например `"250000"`; для совместимости входные значения с нулевой дробной частью (`"250000.00"`) принимаются, ненулевая дробная часть отклоняется. В БД сохраняются целые минимальные единицы. `monthlyFee` может быть нулём; `amount` строго больше нуля. Максимум одного значения — 1 000 000 000 UZS. API принимает и возвращает дату `YYYY-MM-DD`, месяц `YYYY-MM`. В интерфейсе и боте даты показываются как `DD-MM-YYYY`, время — `HH:mm:ss` в `Asia/Tashkent`.
 
-Должник: `{id,name,phone,group,monthlyFee,paid,debt}`. Только положительный долг. Платёж: `{id,studentId,amount,date,method,simulated}`. Методы `manual`, `payme`, `click`; `telegram` доступен только боту. Для Payme/Click сервер всегда устанавливает `simulated:true`. Отмена симуляции ничего не записывает.
+Должник: `{id,name,phone,group,monthlyFee,paid,debt}`. Только положительный долг. Платёж: `{id,studentId,amount,date,createdAt,method,simulated}`. `date` — учётная дата платежа, `createdAt` — время создания записи в ISO 8601 UTC; интерфейс переводит время в Ташкент. Методы `manual`, `payme`, `click`; `telegram` доступен только боту. Для Payme/Click сервер всегда устанавливает `simulated:true`. Отмена симуляции ничего не записывает.
 
 `Idempotency-Key` сохраняет один платёж при повторе или конкурентных запросах. Повтор с другим содержимым возвращает 409. Ключ следует сохранять при сетевом повторе и менять для нового платежа.
 
@@ -106,11 +116,13 @@ curl -b cookies.txt -X DELETE http://localhost:8787/students/1
 APP_URL=https://YOUR_APP_DOMAIN node scripts/configure-bot.mjs
 ```
 
-Скрипт читает токен и секрет из окружения, а не автоматически из `.dev.vars`. Команды: `/debt`, `/pay 1 250000`, `/lang uz`, `/lang ru`, `/help`. Только личные чаты и ID из списка. Язык сохраняется в D1. Дата оплаты берётся из исходного Telegram-сообщения в часовом поясе приложения; повторная доставка `update_id` не создаёт второй платёж. Без Telegram-настроек веб и API продолжают работать.
+Скрипт читает токен и секрет из окружения, а не автоматически из `.dev.vars`. После `/start` доступна постоянная клавиатура: должники, внесение оплаты и переключение RU/UZ. Для оплаты выберите ученика (по 8 на странице), введите сумму целым числом и подтвердите запись; кнопка меню отменяет незавершённый ввод. Язык сохраняется в D1.
+
+Команды задания также поддерживаются: `/debt`, `/pay 1 250000`, `/lang uz`, `/lang ru`, `/help`. Доступ разрешён только в личном чате пользователям из списка. Для `/pay` учётная дата берётся из исходного Telegram-сообщения в часовом поясе приложения; повторная доставка не создаёт второй платёж. Даты и время показываются как `DD-MM-YYYY` и `HH:mm:ss` в Ташкенте. Без Telegram-настроек веб и API продолжают работать.
 
 ## Развёртывание Cloudflare
 
-Авторизуйтесь в своём аккаунте, создайте собственную БД и замените `database_id` в `wrangler.jsonc` на выданный UUID:
+Авторизуйтесь в своём аккаунте, создайте собственную БД и замените `database_id` в `wrangler.jsonc` на выданный UUID. Перед `npm run deploy` замените или удалите `routes`, чтобы конфигурация соответствовала вашему домену:
 
 ```sh
 npx wrangler login
@@ -138,4 +150,4 @@ npm run deploy
 
 ## ИИ и статус
 
-Исходники и тесты создаются с помощью Codex. Макеты сгенерированы Image Gen; рабочий интерфейс — React, не изображение. Реальные найденные ошибки и проверка отражены в [docs/verification.md](docs/verification.md). Текст для части 4 и фактическое время должны описывать выполненную работу; вклад пользователя нельзя приписывать автоматически.
+Исходники и тесты создаются с помощью Codex. Макеты сгенерированы Image Gen; рабочий интерфейс — React, не изображение. Реальные найденные ошибки и проверка отражены в [docs/verification.md](docs/verification.md). Описание применения ИИ для части 4: [docs/AI-USAGE.md](docs/AI-USAGE.md). Фактическое затраченное время не оценивалось и не приписывается пользователю.

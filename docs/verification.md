@@ -1,48 +1,39 @@
-# Independent API edge verification
+# API and frontend-model verification
 
-## Scope
+## Scope and command
 
-Local Worker runtime and real D1 via Miniflare. Tests use isolated databases and test-only credentials; no production account or secret files are read. This check covers API request boundaries, duplicate submission, and browser session handling. It does not claim live deployment, Telegram, or frontend verification.
-
-Run:
+Checks exercise the local Worker runtime and real D1 through Miniflare v5 (`convertV4MiniflareOptions`), plus pure frontend formatting and validation functions. They use isolated databases and test-only credentials; production account and secret files are not read. This report does not claim live-deployment or browser UI verification.
 
 ```sh
-node --import tsx --test tests/edge.test.ts
+npm test
+npm run typecheck
+npm run build
 ```
 
-Node 22+ is required by the installed Cloudflare tooling. The initial run used the bundled Node executable.
+Use Node 22+ as required by the installed Cloudflare tooling. Verification here used bundled Node 24.
 
-## Initial result — 2026-10-29
+## Final local result — 2026-10-29
 
-**7 tests: 4 passed, 3 failed.** Source changes belong to the main implementer; this independent pass adds only tests and this report.
+**31 tests passed, 0 failed.** TypeScript checking passed. The Vite production build passed before the final small receipt timestamp addition; the main implementer performs the final deployment build.
 
-Confirmed defects:
+Covered behavior:
 
-1. Sending JSON `null` to login, student creation, student update, or payment creation yields HTTP 500. Invalid request shapes should be rejected as HTTP 400 before accessing fields.
-2. `PATCH /students/:id` accepts arrays and primitives as successful no-op updates. The JSON body must be a non-null object, excluding arrays.
-3. Payment `method: ["manual"]` passes string-coercion validation and reaches D1 as an unsupported bind value, producing HTTP 500. Require a string before checking the allowed methods.
+- Students CRUD, payment validation, monthly debt calculation, month/year boundaries, zero tariffs, full payment and overpayment.
+- Non-object JSON bodies and incorrectly typed fields return client errors rather than reaching D1.
+- Eight concurrent submissions with one idempotency key produce exactly one payment and one balance change.
+- Session signatures bind expiry; tampered/expired sessions cannot read students. HTTPS cookies use Secure, HttpOnly and SameSite=Strict; logout clears the cookie.
+- Repeated incorrect login attempts are throttled.
+- Telegram malformed nested messages are rejected; unauthorized private users and group commands cannot write payments.
+- Telegram payments use original message time in Asia/Tashkent, including the local midnight boundary. Repeated delivery does not duplicate payment.
+- Telegram button flow selects student and amount, confirms once, supports cancellation and language switching.
+- Whole UZS only: fractional payments and tariffs are rejected, while legacy `100.00` input is normalized to `100`. Both frontend locales display no fractional digits.
+- Payment dates display and accept `DD-MM-YYYY`; wire dates remain ISO `YYYY-MM-DD`.
+- Creation timestamps are returned as ISO UTC and shown separately from the effective payment date in Asia/Tashkent using `DD-MM-YYYY HH:mm:ss`.
 
-Passing behavior:
+## Implementation follow-through
 
-- Eight concurrent requests with the same idempotency key create exactly one payment. Seven retries return the original payment; the balance is reduced once.
-- A session signature binds its expiry. Changing expiry without re-signing is rejected; an expired correctly signed session is rejected.
-- HTTPS login sets Secure, HttpOnly, SameSite=Strict cookies. Logout clears the cookie.
-- Repeated incorrect passwords are throttled and cannot access student data.
+All initial independent review regressions were reproduced before fixes: null request bodies, array/primitive PATCH inputs, array payment methods, and malformed Telegram message data. Their regression tests now pass.
 
-## Acceptance
+Frontend amount fields use integer steps and numeric keyboards; editable form fields are disabled during submission. A payment form obtains today's date when opened instead of reusing login-time date. History shows effective date and recorded-at timestamp separately, and successful payment receipts show recorded time.
 
-Rerun the entire suite after fixes. A green edge suite is necessary but not sufficient for release: the clean-start README, live domain, frontend mobile flows, and live Telegram commands require their own verification.
-
-## Follow-up API and Telegram verification
-
-The main implementer fixed the three initial API defects. All seven original edge tests now pass. Miniflare was upgraded to v5, so the test harness now uses its exported `convertV4MiniflareOptions` adapter.
-
-Four Telegram checks were added. Latest edge run: **11 tests, 10 passed, 1 failed**.
-
-Additional passing behavior:
-
-- A delayed `/pay` uses the original Telegram message timestamp converted to Asia/Tashkent, rather than processing time. Repeating it returns the same receipt and preserves a single payment.
-- The exact Tashkent midnight boundary is handled: `2026-10-01T18:59:59Z` is October 1 locally; `2026-10-01T19:00:00Z` is October 2.
-- Unauthorized private users and group messages cannot write payments.
-
-Remaining finding: a valid-secret webhook with malformed nested message data (`chat` missing/null, non-string `text`, or invalid `date`) raises TypeError/RangeError and returns 500. It should reject malformed payloads with 400 before processing fields. This is covered by `Telegram malformed nested message returns client error instead of runtime error`.
+The deployment configuration sends `/payments` and `/balances` aliases through the Worker before SPA fallback. Live domain, fresh-start README execution and rendered desktop/mobile verification remain separate release checks owned by the main implementer.

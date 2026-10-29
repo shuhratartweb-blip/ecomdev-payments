@@ -1,34 +1,277 @@
-import { Api } from 'grammy';
-import type { Update } from 'grammy/types';
-import type { Env } from './auth';
-import { AppError,id,today } from './domain';
-import { Service } from './service';
-type Lang='ru'|'uz';
-const copy={ru:{denied:'Доступ закрыт. Обратитесь к владельцу приложения.',help:'Ustoz — учёт оплат\n/debt — должники текущего месяца\n/pay <id> <сумма> — внести оплату\n/lang uz — O‘zbekcha\n/lang ru — Русский',empty:'Должников нет.',debt:'Должники',paid:'Оплата записана',lang:'Язык: Русский',invalid:'Проверьте команду, ID и сумму. Пример: /pay 1 100000',notfound:'Ученик не найден.',problem:'Не удалось выполнить команду. Повторите позже.'},uz:{denied:'Kirish yopiq. Ilova egasiga murojaat qiling.',help:'Ustoz — to‘lovlar hisobi\n/debt — joriy oy qarzdorlari\n/pay <id> <summa> — to‘lov kiritish\n/lang uz — O‘zbekcha\n/lang ru — Русский',empty:'Qarzdorlar yo‘q.',debt:'Qarzdorlar',paid:'To‘lov saqlandi',lang:'Til: O‘zbekcha',invalid:'Buyruq, ID va summani tekshiring. Misol: /pay 1 100000',notfound:'O‘quvchi topilmadi.',problem:'Buyruq bajarilmadi. Keyinroq urinib ko‘ring.'}};
-export async function telegram(update:Update,env:Env):Promise<Record<string,unknown>> {
- if(!update||!Number.isSafeInteger(update.update_id))throw new AppError('INVALID_FIELDS');
- const msg='message' in update?update.message:undefined;
- if(!msg)return {ok:true};
- if(!msg.chat||!Number.isSafeInteger(msg.chat.id)||!Number.isSafeInteger(msg.date)||msg.date<946684800||msg.date>253402214400||(msg.text!==undefined&&typeof msg.text!=='string'))throw new AppError('INVALID_FIELDS');
- if(!msg.from||!Number.isSafeInteger(msg.from.id)||!msg.text||msg.chat.type!=='private')return {ok:true};
- const uid=msg.from.id;const allowed=(env.TELEGRAM_ALLOWED_IDS??'').split(',').map(x=>x.trim()).filter(Boolean);
- const reply=(text:string)=>({method:'sendMessage',chat_id:msg.chat.id,text});
- if(!allowed.includes(String(uid)))return reply(copy.ru.denied);
- const pref=await env.DB.prepare('SELECT lang FROM telegram_preferences WHERE user_id=?').bind(uid).first<{lang:Lang}>();let lang:Lang=pref?.lang??'ru';
- const [raw,...args]=msg.text.trim().split(/\s+/);const command=raw.split('@')[0];
- if(command==='/lang'&&['ru','uz'].includes(args[0])){lang=args[0] as Lang;await env.DB.prepare('INSERT INTO telegram_preferences(user_id,lang) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang').bind(uid,lang).run();return reply(copy[lang].lang)}
- const t=copy[lang],service=new Service(env.DB);const current=today(env.TIMEZONE,new Date(msg.date*1000));
- if(command==='/start'||command==='/help')return reply(t.help);
- if(command==='/pay'){
-  try{if(args.length!==2)throw new AppError('INVALID_FIELDS');const sid=id(args[0]);const result=await service.pay(sid,{amount:args[1].replace(',','.'),date:current,method:'telegram'},`tg:payment:${update.update_id}`,true);const student=await service.find(sid);return reply(`${t.paid}\n#${sid} ${student.name}\n${result.payment.amount} UZS · ${result.payment.date}`)}
-  catch(e){if(e instanceof AppError)return reply(e.status===404?t.notfound:t.invalid);throw e}
- }
- if(command==='/debt'){
-  const month=current.slice(0,7),rows=await service.debtors(month);if(!rows.length)return reply(`${t.debt} · ${month}\n${t.empty}`);
-  const chunks:string[]=[];let chunk=`${t.debt} · ${month}\n`;
-  for(const s of rows){const line=`\n#${s.id} ${s.name} · ${s.group}: ${s.debt} UZS`;if(chunk.length+line.length>3500){chunks.push(chunk);chunk=''}chunk+=line}chunks.push(chunk);
-  if(chunks.length>1){const api=new Api(env.TELEGRAM_BOT_TOKEN!);for(const part of chunks.slice(0,-1))await api.sendMessage(msg.chat.id,part)}
-  return reply(chunks.at(-1)!);
- }
- return reply(t.help);
+import { Api } from "grammy";
+import type { Update } from "grammy/types";
+import type { Env } from "./auth";
+import { AppError, id, today, money, decimal } from "./domain";
+import { Service } from "./service";
+type Lang = "ru" | "uz";
+const copy = {
+  ru: {
+    denied: "Доступ закрыт. Обратитесь к владельцу приложения.",
+    help: "Ustoz — учёт оплат. Выберите действие кнопкой ниже.",
+    empty: "Должников нет.",
+    debt: "📋 Должники",
+    pay: "💳 Внести оплату",
+    language: "🌐 Язык / Til",
+    cancel: "↩️ В меню",
+    confirm: "✅ Подтвердить оплату",
+    choose: "Выберите ученика:",
+    amount: "Введите сумму в целых сумах:",
+    check: "Проверьте оплату и подтвердите:",
+    paid: "Оплата записана",
+    lang: "Язык: Русский",
+    invalid: "Введите положительную сумму в целых сумах.",
+    notfound: "Ученик не найден.",
+    expired: "Выберите действие заново.",
+    next: "Далее →",
+    prev: "← Назад",
+  },
+  uz: {
+    denied: "Kirish yopiq. Ilova egasiga murojaat qiling.",
+    help: "Ustoz — to‘lovlar hisobi. Quyidagi tugmalardan birini tanlang.",
+    empty: "Qarzdorlar yo‘q.",
+    debt: "📋 Qarzdorlar",
+    pay: "💳 To‘lov kiritish",
+    language: "🌐 Язык / Til",
+    cancel: "↩️ Menyuga",
+    confirm: "✅ To‘lovni tasdiqlash",
+    choose: "O‘quvchini tanlang:",
+    amount: "Summani butun so‘mda kiriting:",
+    check: "To‘lovni tekshiring va tasdiqlang:",
+    paid: "To‘lov saqlandi",
+    lang: "Til: O‘zbekcha",
+    invalid: "Musbat summani butun so‘mda kiriting.",
+    notfound: "O‘quvchi topilmadi.",
+    expired: "Amalni qayta tanlang.",
+    next: "Keyingi →",
+    prev: "← Oldingi",
+  },
+};
+const dateLabel = (s: string) => s.split("-").reverse().join("-");
+const timeLabel = (seconds: number) =>
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(seconds * 1000));
+export async function telegram(
+  update: Update,
+  env: Env,
+): Promise<Record<string, unknown>> {
+  if (!update || !Number.isSafeInteger(update.update_id))
+    throw new AppError("INVALID_FIELDS");
+  const msg = "message" in update ? update.message : undefined;
+  if (!msg) return { ok: true };
+  if (
+    !msg.chat ||
+    !Number.isSafeInteger(msg.chat.id) ||
+    !Number.isSafeInteger(msg.date) ||
+    msg.date < 946684800 ||
+    msg.date > 253402214400 ||
+    (msg.text !== undefined && typeof msg.text !== "string")
+  )
+    throw new AppError("INVALID_FIELDS");
+  if (
+    !msg.from ||
+    !Number.isSafeInteger(msg.from.id) ||
+    !msg.text ||
+    msg.chat.type !== "private"
+  )
+    return { ok: true };
+  const uid = msg.from.id;
+  const allowed = (env.TELEGRAM_ALLOWED_IDS ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const reply = (text: string, rows?: string[][]) => ({
+    method: "sendMessage",
+    chat_id: msg.chat.id,
+    text,
+    ...(rows
+      ? {
+          reply_markup: {
+            keyboard: rows.map((row) => row.map((text) => ({ text }))),
+            resize_keyboard: true,
+            is_persistent: true,
+          },
+        }
+      : {}),
+  });
+  if (!allowed.includes(String(uid))) return reply(copy.ru.denied);
+  const pref = await env.DB.prepare(
+    "SELECT lang FROM telegram_preferences WHERE user_id=?",
+  )
+    .bind(uid)
+    .first<{ lang: Lang }>();
+  let lang: Lang = pref?.lang ?? "ru";
+  const input = msg.text.trim();
+  const [raw, ...args] = input.split(/\s+/);
+  const command = raw.split("@")[0];
+  const chosen =
+    input === "Русский"
+      ? "ru"
+      : input === "O‘zbekcha"
+        ? "uz"
+        : command === "/lang" && ["ru", "uz"].includes(args[0])
+          ? args[0]
+          : undefined;
+  if (chosen) {
+    lang = chosen as Lang;
+    await env.DB.prepare(
+      "INSERT INTO telegram_preferences(user_id,lang) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang",
+    )
+      .bind(uid, lang)
+      .run();
+  }
+  const t = copy[lang],
+    service = new Service(env.DB);
+  const current = today(env.TIMEZONE, new Date(msg.date * 1000));
+  const menu = [[t.debt, t.pay], [t.language]],
+    back = [[t.cancel]];
+  const clear = () =>
+    env.DB.prepare("DELETE FROM telegram_flow WHERE user_id=?").bind(uid).run();
+  if (chosen) return reply(t.lang, menu);
+  if (
+    command === "/start" ||
+    command === "/help" ||
+    Object.values(copy).some((c) => input === c.cancel)
+  ) {
+    await clear();
+    return reply(t.help, menu);
+  }
+  if (input === t.language)
+    return reply("Выберите язык / Tilni tanlang", [
+      ["Русский", "O‘zbekcha"],
+      [t.cancel],
+    ]);
+  const selection = input.match(/^#(\d+) · /);
+  const pageMatch = input.match(
+    /^(?:Далее →|← Назад|Keyingi →|← Oldingi) (\d+)$/,
+  );
+  if (input === t.pay || pageMatch) {
+    await clear();
+    const students = await service.students();
+    const page = Math.max(0, Number(pageMatch?.[1] ?? 1) - 1);
+    const rows = students
+      .slice(page * 8, page * 8 + 8)
+      .map((s) => [`#${s.id} · ${s.name.slice(0, 70)}`]);
+    const navigation = [];
+    if (page > 0) navigation.push(`${t.prev} ${page}`);
+    if ((page + 1) * 8 < students.length)
+      navigation.push(`${t.next} ${page + 2}`);
+    if (navigation.length) rows.push(navigation);
+    rows.push([t.cancel]);
+    return reply(t.choose, rows);
+  }
+  if (selection) {
+    try {
+      const student = await service.find(id(selection[1]));
+      await env.DB.prepare(
+        "INSERT INTO telegram_flow(user_id,student_id,amount,nonce,updated_at) VALUES(?,?,NULL,?,?) ON CONFLICT(user_id) DO UPDATE SET student_id=excluded.student_id,amount=NULL,nonce=excluded.nonce,updated_at=excluded.updated_at",
+      )
+        .bind(uid, student.id, `tg:flow:${update.update_id}`, msg.date)
+        .run();
+      return reply(`${student.name}\n${t.amount}`, back);
+    } catch (e) {
+      if (e instanceof AppError) return reply(t.notfound, menu);
+      throw e;
+    }
+  }
+  const receipt = async (sid: number, amount: string, key: string) => {
+    const result = await service.pay(
+      sid,
+      { amount, date: current, method: "telegram" },
+      key,
+      true,
+    );
+    const student = await service.find(sid);
+    return reply(
+      `${t.paid}\n#${sid} ${student.name}\n${result.payment.amount} UZS · ${dateLabel(result.payment.date)} ${timeLabel(msg.date)}`,
+      menu,
+    );
+  };
+  if (command === "/pay") {
+    try {
+      if (args.length !== 2) throw new AppError("INVALID_FIELDS");
+      return await receipt(
+        id(args[0]),
+        args[1].replace(",", "."),
+        `tg:payment:${update.update_id}`,
+      );
+    } catch (e) {
+      if (e instanceof AppError)
+        return reply(e.status === 404 ? t.notfound : t.invalid, menu);
+      throw e;
+    }
+  }
+  if (command === "/debt" || input === t.debt) {
+    const month = current.slice(0, 7),
+      rows = await service.debtors(month);
+    if (!rows.length)
+      return reply(
+        `${t.debt} · ${month.split("-").reverse().join("-")}\n${t.empty}`,
+        menu,
+      );
+    const chunks: string[] = [];
+    let chunk = `${t.debt} · ${month.split("-").reverse().join("-")}\n`;
+    for (const s of rows) {
+      const line = `\n#${s.id} ${s.name} · ${s.group}: ${s.debt} UZS`;
+      if (chunk.length + line.length > 3500) {
+        chunks.push(chunk);
+        chunk = "";
+      }
+      chunk += line;
+    }
+    chunks.push(chunk);
+    if (chunks.length > 1) {
+      const api = new Api(env.TELEGRAM_BOT_TOKEN!);
+      for (const part of chunks.slice(0, -1))
+        await api.sendMessage(msg.chat.id, part);
+    }
+    return reply(chunks.at(-1)!, menu);
+  }
+  const state = await env.DB.prepare(
+    "SELECT student_id,amount,nonce,updated_at FROM telegram_flow WHERE user_id=?",
+  )
+    .bind(uid)
+    .first<{
+      student_id: number;
+      amount: string | null;
+      nonce: string;
+      updated_at: number;
+    }>();
+  if (state) {
+    if (msg.date - state.updated_at > 1800) {
+      await clear();
+      return reply(t.expired, menu);
+    }
+    try {
+      if (input === t.confirm && state.amount) {
+        const result = await receipt(
+          state.student_id,
+          state.amount,
+          state.nonce,
+        );
+        await clear();
+        return result;
+      }
+      const amount = decimal(money(input.replace(/\s/g, "")));
+      const student = await service.find(state.student_id);
+      await env.DB.prepare(
+        "UPDATE telegram_flow SET amount=?,updated_at=? WHERE user_id=? AND nonce=?",
+      )
+        .bind(amount, msg.date, uid, state.nonce)
+        .run();
+      return reply(`${t.check}\n${student.name}\n${amount} UZS`, [
+        [t.confirm],
+        [t.cancel],
+      ]);
+    } catch (e) {
+      if (e instanceof AppError)
+        return reply(e.status === 404 ? t.notfound : t.invalid, back);
+      throw e;
+    }
+  }
+  return reply(t.help, menu);
 }

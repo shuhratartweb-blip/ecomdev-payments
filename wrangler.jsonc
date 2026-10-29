@@ -3,9 +3,7 @@
   "name": "ecomdev-payments",
   "main": "src/server/index.ts",
   "compatibility_date": "2026-05-01",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -15,27 +13,29 @@
       "/students",
       "/students/*",
       "/debtors",
-      "/telegram/*"
-    ]
+      "/payments",
+      "/balances",
+      "/telegram/*",
+    ],
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "ecomdev-payments",
       "database_id": "6105f491-effa-4f33-bc49-e49775cb2089",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "vars": {
-    "TIMEZONE": "Asia/Tashkent"
+    "TIMEZONE": "Asia/Tashkent",
   },
   "observability": {
-    "enabled": true
+    "enabled": true,
   },
   "routes": [
     {
       "pattern": "ustoz.rieltor.store",
-      "custom_domain": true
-    }
-  ]
+      "custom_domain": true,
+    },
+  ],
 }

@@ -24,6 +24,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "esbuild": "^0.28.2",
     "miniflare": "^5.20261023.2-beta",
+    "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^6.4.5",
