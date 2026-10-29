@@ -32,9 +32,11 @@ before(async () => {
   db = await mf.getD1Database("DB");
   const sql = (
     await Promise.all(
-      ["0001_init.sql", "0002_telegram_flow.sql"].map((name) =>
-        readFile("migrations/" + name, "utf8"),
-      ),
+      [
+        "0001_init.sql",
+        "0002_telegram_flow.sql",
+        "0003_telegram_payment_method.sql",
+      ].map((name) => readFile("migrations/" + name, "utf8")),
     )
   ).join("\n");
   for (const stmt of sql.split(";").filter((x) => x.trim()))

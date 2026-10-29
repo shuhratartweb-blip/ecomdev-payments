@@ -21,6 +21,12 @@ const copy = {
     language: "🌐 Язык / Til",
     cancel: "↩️ В меню",
     confirm: "✅ Подтвердить оплату",
+    payme: "Payme — симуляция",
+    click: "Click — симуляция",
+    simulate: "✅ Симулировать оплату",
+    simulation: "Симуляция — деньги не списываются",
+    chooseMethod:
+      "Выберите Payme/Click для симуляции или подтвердите обычную запись оплаты:",
     choose: "Выберите ученика:",
     amount: "Введите сумму в целых сумах:",
     check: "Проверьте оплату и подтвердите:",
@@ -48,6 +54,12 @@ const copy = {
     language: "🌐 Язык / Til",
     cancel: "↩️ Menyuga",
     confirm: "✅ To‘lovni tasdiqlash",
+    payme: "Payme — sinov",
+    click: "Click — sinov",
+    simulate: "✅ Sinov to‘lovini tasdiqlash",
+    simulation: "Sinov to‘lovi — pul yechilmaydi",
+    chooseMethod:
+      "Sinov uchun Payme/Click ni tanlang yoki oddiy to‘lov yozuvini tasdiqlang:",
     choose: "O‘quvchini tanlang:",
     amount: "Summani butun so‘mda kiriting:",
     check: "To‘lovni tekshiring va tasdiqlang:",
@@ -204,7 +216,7 @@ export async function telegram(
     try {
       const student = await service.find(id(selection[1]));
       await env.DB.prepare(
-        "INSERT INTO telegram_flow(user_id,student_id,amount,nonce,updated_at) VALUES(?,?,NULL,?,?) ON CONFLICT(user_id) DO UPDATE SET student_id=excluded.student_id,amount=NULL,nonce=excluded.nonce,updated_at=excluded.updated_at",
+        "INSERT INTO telegram_flow(user_id,student_id,amount,nonce,updated_at) VALUES(?,?,NULL,?,?) ON CONFLICT(user_id) DO UPDATE SET student_id=excluded.student_id,amount=NULL,method='telegram',nonce=excluded.nonce,updated_at=excluded.updated_at",
       )
         .bind(uid, student.id, `tg:flow:${update.update_id}`, msg.date)
         .run();
@@ -214,16 +226,21 @@ export async function telegram(
       throw e;
     }
   }
-  const receipt = async (sid: number, amount: string, key: string) => {
+  const receipt = async (
+    sid: number,
+    amount: string,
+    key: string,
+    method: "telegram" | "payme" | "click" = "telegram",
+  ) => {
     const result = await service.pay(
       sid,
-      { amount, date: current, method: "telegram" },
+      { amount, date: current, method },
       key,
       true,
     );
     const student = await service.find(sid);
     return reply(
-      `${t.paid}\n#${sid} ${student.name}\n${result.payment.amount} UZS · ${dateLabel(result.payment.date)} ${timeLabel(msg.date)}`,
+      `${t.paid}${result.payment.simulated ? `\n${method === "payme" ? "Payme" : "Click"} · ${t.simulation}` : ""}\n#${sid} ${student.name}\n${result.payment.amount} UZS · ${dateLabel(result.payment.date)} ${timeLabel(msg.date)}`,
       menu,
     );
   };
@@ -269,11 +286,12 @@ export async function telegram(
     return reply(chunks.at(-1)!, menu);
   }
   const state = await env.DB.prepare(
-    "SELECT student_id,amount,nonce,updated_at FROM telegram_flow WHERE user_id=?",
+    "SELECT student_id,amount,nonce,updated_at,method FROM telegram_flow WHERE user_id=?",
   )
     .bind(uid)
     .first<{
       student_id: number;
+      method: "telegram" | "payme" | "click";
       amount: string | null;
       nonce: string;
       updated_at: number;
@@ -284,11 +302,28 @@ export async function telegram(
       return reply(t.expired, menu);
     }
     try {
-      if (input === t.confirm && state.amount) {
+      if ((input === t.payme || input === t.click) && state.amount) {
+        const method = input === t.payme ? "payme" : "click";
+        await env.DB.prepare(
+          "UPDATE telegram_flow SET method=?,updated_at=? WHERE user_id=? AND nonce=?",
+        )
+          .bind(method, msg.date, uid, state.nonce)
+          .run();
+        const student = await service.find(state.student_id);
+        return reply(
+          `${t.check}\n${student.name}\n${state.amount} UZS\n${method === "payme" ? "Payme" : "Click"}\n${t.simulation}`,
+          [[t.simulate], [t.cancel]],
+        );
+      }
+      if (
+        input === (state.method === "telegram" ? t.confirm : t.simulate) &&
+        state.amount
+      ) {
         const result = await receipt(
           state.student_id,
           state.amount,
           state.nonce,
+          state.method,
         );
         await clear();
         return result;
@@ -296,17 +331,25 @@ export async function telegram(
       const amount = decimal(money(input.replace(/\s/g, "")));
       const student = await service.find(state.student_id);
       await env.DB.prepare(
-        "UPDATE telegram_flow SET amount=?,updated_at=? WHERE user_id=? AND nonce=?",
+        "UPDATE telegram_flow SET amount=?,method='telegram',updated_at=? WHERE user_id=? AND nonce=?",
       )
         .bind(amount, msg.date, uid, state.nonce)
         .run();
-      return reply(`${t.check}\n${student.name}\n${amount} UZS`, [
-        [t.confirm],
-        [t.cancel],
-      ]);
+      return reply(
+        `${t.check}\n${student.name}\n${amount} UZS\n\n${t.chooseMethod}`,
+        [[t.payme, t.click], [t.confirm], [t.cancel]],
+      );
     } catch (e) {
       if (e instanceof AppError)
-        return reply(e.status === 404 ? t.notfound : t.invalid, back);
+        return reply(
+          e.status === 404 ? t.notfound : t.invalid,
+          state.amount
+            ? [
+                [state.method === "telegram" ? t.confirm : t.simulate],
+                [t.cancel],
+              ]
+            : back,
+        );
       throw e;
     }
   }

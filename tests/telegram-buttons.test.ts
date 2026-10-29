@@ -29,7 +29,11 @@ before(async () => {
     }),
   );
   db = await mf.getD1Database("DB");
-  for (const file of ["0001_init.sql", "0002_telegram_flow.sql"])
+  for (const file of [
+    "0001_init.sql",
+    "0002_telegram_flow.sql",
+    "0003_telegram_payment_method.sql",
+  ])
     for (const sql of (await readFile("migrations/" + file, "utf8"))
       .split(";")
       .filter((x) => x.trim()))
@@ -157,5 +161,75 @@ test("all students includes fully paid and overpaid students, with payment butto
   assert.match(
     (await send("👥 Barcha o‘quvchilar")).text,
     /Ortiqcha to‘lov: 50 UZS/,
+  );
+});
+
+test("Payme and Click simulate only after explicit confirmation, record provider and resist retries", async () => {
+  await send("Русский");
+  for (const [button, method] of [
+    ["Payme — симуляция", "payme"],
+    ["Click — симуляция", "click"],
+  ]) {
+    const before = (await db
+      .prepare("SELECT COUNT(*) AS n FROM payments")
+      .first<{ n: number }>())!.n;
+    await send("#1 · Ali");
+    const choice = await send("12000");
+    assert.ok(
+      choice.reply_markup.keyboard.flat().some((b) => b.text === button),
+    );
+    const confirm = await send(button);
+    assert.match(confirm.text, /Симуляция — деньги не списываются/);
+    assert.match(
+      confirm.text,
+      new RegExp(method === "payme" ? "Payme" : "Click"),
+    );
+    assert.equal(
+      (await db
+        .prepare("SELECT COUNT(*) AS n FROM payments")
+        .first<{ n: number }>())!.n,
+      before,
+    );
+    // A stale manual confirmation cannot accept a simulated payment.
+    await send("✅ Подтвердить оплату");
+    assert.equal(
+      (await db
+        .prepare("SELECT COUNT(*) AS n FROM payments")
+        .first<{ n: number }>())!.n,
+      before,
+    );
+    const updateId = ++seq;
+    const receipt = await send("✅ Симулировать оплату", updateId);
+    assert.match(receipt.text, /Симуляция — деньги не списываются/);
+    await send("✅ Симулировать оплату", updateId);
+    assert.equal(
+      (await db
+        .prepare("SELECT COUNT(*) AS n FROM payments")
+        .first<{ n: number }>())!.n,
+      before + 1,
+    );
+    const saved = await db
+      .prepare("SELECT method,amount FROM payments ORDER BY id DESC LIMIT 1")
+      .first<{ method: string; amount: number }>();
+    assert.equal(saved!.method, method);
+    assert.equal(saved!.amount, 1200000);
+  }
+});
+test("cancelled simulation writes nothing and Uzbek flow is translated", async () => {
+  const before = (await db
+    .prepare("SELECT COUNT(*) AS n FROM payments")
+    .first<{ n: number }>())!.n;
+  await send("O‘zbekcha");
+  await send("#1 · Ali");
+  await send("15000");
+  const confirm = await send("Click — sinov");
+  assert.match(confirm.text, /pul yechilmaydi/);
+  await send("↩️ Menyuga");
+  await send("✅ Sinov to‘lovini tasdiqlash");
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) AS n FROM payments")
+      .first<{ n: number }>())!.n,
+    before,
   );
 });

@@ -39,9 +39,11 @@ before(async () => {
   db = await mf.getD1Database("DB");
   const sql = (
     await Promise.all(
-      ["0001_init.sql", "0002_telegram_flow.sql"].map((name) =>
-        readFile("migrations/" + name, "utf8"),
-      ),
+      [
+        "0001_init.sql",
+        "0002_telegram_flow.sql",
+        "0003_telegram_payment_method.sql",
+      ].map((name) => readFile("migrations/" + name, "utf8")),
     )
   ).join("\n");
   for (const statement of sql.split(";").filter((s) => s.trim()))
@@ -393,15 +395,23 @@ test("legacy .00 input is normalized to whole UZS output", async () => {
   assert.equal(payments.length, 1);
 });
 
-
-test('payment history distinguishes effective date from UTC creation timestamp',async () => {
+test("payment history distinguishes effective date from UTC creation timestamp", async () => {
   const student = await createStudent();
-  const response = await request(`/students/${student.id}/payments`,'POST',{amount:'100',date:'2026-10-01',method:'manual'});
-  assert.equal(response.status,201);
-  const payment = await response.json() as {id:number;createdAt:string};
-  assert.match(payment.createdAt,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-  await db.prepare('UPDATE payments SET created_at=? WHERE id=?').bind('2026-10-02 19:01:02',payment.id).run();
-  const rows = await (await request(`/students/${student.id}/payments`)).json() as {date:string;createdAt:string}[];
-  assert.equal(rows[0].date,'2026-10-01');
-  assert.equal(rows[0].createdAt,'2026-10-02T19:01:02Z');
+  const response = await request(`/students/${student.id}/payments`, "POST", {
+    amount: "100",
+    date: "2026-10-01",
+    method: "manual",
+  });
+  assert.equal(response.status, 201);
+  const payment = (await response.json()) as { id: number; createdAt: string };
+  assert.match(payment.createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  await db
+    .prepare("UPDATE payments SET created_at=? WHERE id=?")
+    .bind("2026-10-02 19:01:02", payment.id)
+    .run();
+  const rows = (await (
+    await request(`/students/${student.id}/payments`)
+  ).json()) as { date: string; createdAt: string }[];
+  assert.equal(rows[0].date, "2026-10-01");
+  assert.equal(rows[0].createdAt, "2026-10-02T19:01:02Z");
 });
